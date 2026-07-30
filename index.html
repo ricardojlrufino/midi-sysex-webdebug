@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Captura MIDI — Web MIDI SysEx Debugger</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --border: #2a2f3d; --text: #e6e8ee;
+    --muted: #8a90a3; --accent: #4f8cff; --ok: #3ecf8e; --warn: #e0a934; --err: #e85c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .status { font-size: 12px; color: var(--muted); }
+  button {
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button.secondary { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: var(--err); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  select, input[type=text], input[type=number] {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px;
+  }
+  main { display: grid; grid-template-columns: 1fr 420px; gap: 0; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { padding: 20px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+    margin-bottom: 16px;
+  }
+  .panel h2 { font-size: 13px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .badge {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600;
+  }
+  .badge.open { background: rgba(224,169,52,.15); color: var(--warn); }
+  .badge.closed { background: rgba(62,207,142,.15); color: var(--ok); }
+  .pkg-block {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 10px; background: #0c0e15;
+  }
+  .pkg-block.unselected { opacity: .45; }
+  .pkg-block-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .pkg-block-head .meta { color: var(--muted); font-size: 11px; flex: 1; }
+  pre.hex {
+    background: #0a0c12; border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+    font: 12px/1.6 "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all;
+    max-height: 260px; overflow-y: auto; margin: 0;
+  }
+  .hexline { display: block; }
+  .hexline .byte { color: var(--text); }
+  .hexline .byte.hdr { color: var(--muted); }
+  .hexline .idx { color: #55597a; font-size: 10px; }
+  .field { margin-bottom: 10px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .field select, .field input { width: 100%; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+  .tag { display: inline-block; background: rgba(79,140,255,.15); color: var(--accent); border-radius: 4px; padding: 1px 6px; font-size: 11px; margin-right: 4px; }
+  .empty { color: var(--muted); font-style: italic; padding: 20px 0; text-align: center; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .small { font-size: 11px; color: var(--muted); }
+  .rowbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+  .rowbtn.del { color: var(--err); }
+  .count-pill { background: var(--border); border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Captura MIDI — Web MIDI SysEx Debugger</h1>
+  <select id="portSelect" disabled><option>Nenhuma porta detectada</option></select>
+  <button id="connectBtn">Conectar Web MIDI</button>
+  <span class="status" id="statusText">Desconectado</span>
+</header>
+
+<main>
+  <section>
+    <div class="panel">
+      <h2>Preview dos pacotes recentes</h2>
+      <div class="actions" style="margin-top:0; margin-bottom:10px;">
+        <label class="small" style="display:flex; align-items:center; gap:6px;">
+          Janela de agrupamento
+          <input type="number" id="windowSecInput" min="1" max="60" value="1" style="width:55px;">
+          s desde o último pacote
+        </label>
+        <button class="secondary" id="selectAllBtn">Selecionar todos</button>
+        <button class="secondary" id="selectNoneBtn">Limpar seleção</button>
+      </div>
+      <div class="small" style="margin-bottom:10px;">
+        Pacotes fecham individualmente após 2s de silêncio MIDI. Pacotes que chegam dentro da janela acima
+        (contada a partir da última mensagem recebida) continuam aparecendo juntos aqui, mesmo já fechados —
+        a lista só é limpa quando chegar uma mensagem nova depois desse tempo sem nada (não por relógio).
+      </div>
+      <div id="pkgList"><div class="empty">Aguardando primeira mensagem SysEx…</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Histórico de pacotes <span class="count-pill" id="histCount">0</span></h2>
+      <div class="actions" style="margin-top:0; margin-bottom:12px;">
+        <button class="secondary" id="exportMdBtn">Exportar Markdown</button>
+        <button class="secondary" id="exportJsonBtn">Exportar JSON</button>
+        <button class="danger" id="clearBtn">Limpar histórico</button>
+      </div>
+      <table>
+        <thead>
+          <tr><th>#</th><th>Hora</th><th>Msgs</th><th>Rótulo</th><th>Hex</th><th></th></tr>
+        </thead>
+        <tbody id="histBody">
+          <tr><td colspan="6" class="empty">Nenhum pacote capturado ainda.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="panel">
+      <h2>Rotular pacote atual</h2>
+      <div class="field">
+        <label>Cadeia de sinal (slot/módulo)</label>
+        <select id="fSlot">
+          <option value="">—</option>
+          <option>FX1</option><option>FX2</option><option>AMP</option><option>NR</option>
+          <option>CAB</option><option>EQ</option><option>MOD</option><option>DLY</option>
+          <option>RVB</option><option>Preset</option><option>Global</option><option>Outro</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Ação</label>
+        <select id="fAcao">
+          <option value="">—</option>
+          <option>Selecionar Efeito</option>
+          <option>Ajustar Parâmetro</option>
+          <option>ON/OFF</option>
+          <option>Selecionar Preset</option>
+          <option>Volume</option>
+          <option>Outro</option>
+        </select>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Efeito</label>
+          <input type="text" id="fEfeito" placeholder="ex: COMP">
+        </div>
+        <div class="field">
+          <label>Parâmetro</label>
+          <input type="text" id="fParametro" placeholder="ex: Sustain">
+        </div>
+      </div>
+      <div class="field">
+        <label>Valor exibido na UI</label>
+        <input type="text" id="fValor" placeholder="ex: 22">
+      </div>
+      <div class="field">
+        <label>Notas (opcional)</label>
+        <input type="text" id="fNotas" placeholder="ex: valor anterior era 20">
+      </div>
+      <div class="actions">
+        <button id="saveBtn" disabled>Salvar pacote rotulado</button>
+        <button class="secondary" id="saveUnlabeledBtn" disabled>Salvar sem rótulo</button>
+      </div>
+      <div class="small" style="margin-top:8px;">
+        O rótulo é aplicado a todos os pacotes marcados (checkbox) na lista à esquerda no momento do clique —
+        use isso quando uma ação gerar vários pacotes separados. Desmarque os que não pertencem à ação atual.
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const GAP_MS = 2000;
+const STORAGE_KEY = 'midi_sysex_captures_v1';
+
+let midiAccess = null;
+let currentInput = null;
+let recentPackets = []; // [{ id, messages:[Uint8Array...], startTime, lastTime, closed, selected }], index 0 = mais recente
+let closeTimer = null;
+let history = loadHistory();
+let sysexBuffer = null; // for fragmented sysex reassembly
+let windowMs = 1000; // janela de agrupamento entre pacotes, configurável na UI
+
+const el = id => document.getElementById(id);
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+  catch { return []; }
+}
+function saveHistory() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+}
+
+function toHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+}
+
+function newPacket() {
+  return {
+    id: Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    messages: [], startTime: Date.now(), lastTime: Date.now(), closed: false, selected: true,
+  };
+}
+
+function renderPreview() {
+  const list = el('pkgList');
+  const withMsgs = recentPackets.filter(p => p.messages.length > 0);
+
+  if (withMsgs.length === 0) {
+    list.innerHTML = '<div class="empty">Aguardando primeira mensagem SysEx…</div>';
+    el('saveBtn').disabled = true;
+    el('saveUnlabeledBtn').disabled = true;
+    return;
+  }
+
+  list.innerHTML = withMsgs.map(pkg => {
+    const hexLines = pkg.messages.map((m, i) =>
+      `<span class="hexline"><span class="idx">[${i}]</span> ${toHex(m)}</span>`
+    ).join('\n');
+    return `<div class="pkg-block ${pkg.selected ? '' : 'unselected'}">
+      <div class="pkg-block-head">
+        <input type="checkbox" class="pkg-check" data-id="${pkg.id}" ${pkg.selected ? 'checked' : ''}>
+        <span class="badge ${pkg.closed ? 'closed' : 'open'}">${pkg.closed ? 'fechado' : 'aberto'}</span>
+        <span class="meta">${pkg.messages.length} msg — ${new Date(pkg.startTime).toLocaleTimeString()}</span>
+      </div>
+      <pre class="hex">${hexLines}</pre>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.pkg-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const pkg = recentPackets.find(p => p.id === cb.dataset.id);
+      if (pkg) { pkg.selected = cb.checked; renderPreview(); }
+    });
+  });
+
+  const anySelected = withMsgs.some(p => p.selected);
+  el('saveBtn').disabled = !anySelected;
+  el('saveUnlabeledBtn').disabled = !anySelected;
+}
+
+function closeCurrentPacket(pkg) {
+  if (!pkg || pkg.messages.length === 0) return;
+  pkg.closed = true;
+  renderPreview();
+}
+
+function scheduleClose(pkg) {
+  if (closeTimer) clearTimeout(closeTimer);
+  closeTimer = setTimeout(() => closeCurrentPacket(pkg), GAP_MS);
+}
+
+function onSysexMessage(bytes) {
+  const now = Date.now();
+  // Só limpa o histórico visível quando uma mensagem NOVA chega depois da
+  // janela expirada desde a última atividade — nunca por polling/relógio,
+  // pra não sumir pacotes fechados enquanto o usuário ainda está olhando.
+  if (recentPackets.length > 0 && (now - recentPackets[0].lastTime) > windowMs) {
+    recentPackets = [];
+  }
+  let pkg = recentPackets[0];
+  if (!pkg || pkg.closed) {
+    pkg = newPacket();
+    recentPackets.unshift(pkg);
+  }
+  pkg.messages.push(bytes);
+  pkg.lastTime = now;
+  renderPreview();
+  scheduleClose(pkg);
+}
+
+el('windowSecInput').addEventListener('change', () => {
+  const v = Math.max(1, Math.min(60, Number(el('windowSecInput').value) || 1));
+  el('windowSecInput').value = v;
+  windowMs = v * 1000;
+});
+el('selectAllBtn').addEventListener('click', () => {
+  recentPackets.forEach(p => p.selected = true);
+  renderPreview();
+});
+el('selectNoneBtn').addEventListener('click', () => {
+  recentPackets.forEach(p => p.selected = false);
+  renderPreview();
+});
+
+function handleMIDIMessage(event) {
+  const data = event.data;
+  if (data.length === 0) return;
+
+  // Reassemble fragmented sysex if needed (some backends chunk it)
+  if (sysexBuffer) {
+    sysexBuffer = concatBytes(sysexBuffer, data);
+    if (sysexBuffer[sysexBuffer.length - 1] === 0xF7) {
+      onSysexMessage(sysexBuffer);
+      sysexBuffer = null;
+    }
+    return;
+  }
+
+  if (data[0] === 0xF0) {
+    if (data[data.length - 1] === 0xF7) {
+      onSysexMessage(data);
+    } else {
+      sysexBuffer = data;
+    }
+  }
+  // non-sysex messages ignored for this tool
+}
+
+function concatBytes(a, b) {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0); out.set(b, a.length);
+  return out;
+}
+
+function populatePorts() {
+  const sel = el('portSelect');
+  sel.innerHTML = '';
+  const inputs = Array.from(midiAccess.inputs.values());
+  if (inputs.length === 0) {
+    sel.innerHTML = '<option>Nenhuma porta MIDI encontrada</option>';
+    sel.disabled = true;
+    return;
+  }
+  inputs.forEach(inp => {
+    const opt = document.createElement('option');
+    opt.value = inp.id;
+    opt.textContent = `${inp.name} (${inp.manufacturer || 'sem fabricante'})`;
+    sel.appendChild(opt);
+  });
+  sel.disabled = false;
+  attachToSelectedPort();
+}
+
+function attachToSelectedPort() {
+  if (currentInput) currentInput.onmidimessage = null;
+  const id = el('portSelect').value;
+  const inp = midiAccess.inputs.get(id);
+  if (!inp) return;
+  currentInput = inp;
+  currentInput.onmidimessage = handleMIDIMessage;
+  el('statusText').textContent = `Escutando: ${inp.name}`;
+}
+
+async function connect() {
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: true });
+    el('statusText').textContent = 'Conectado — selecione a porta';
+    el('connectBtn').textContent = 'Reconectar';
+    populatePorts();
+    midiAccess.onstatechange = populatePorts;
+  } catch (err) {
+    el('statusText').textContent = 'Erro: ' + err.message + ' (precisa http(s)://localhost, não file://)';
+  }
+}
+
+el('connectBtn').addEventListener('click', connect);
+el('portSelect').addEventListener('change', attachToSelectedPort);
+
+function currentLabel() {
+  return {
+    slot: el('fSlot').value,
+    acao: el('fAcao').value,
+    efeito: el('fEfeito').value,
+    parametro: el('fParametro').value,
+    valor: el('fValor').value,
+    notas: el('fNotas').value,
+  };
+}
+
+function clearLabelForm() {
+  el('fValor').value = '';
+  el('fNotas').value = '';
+}
+
+function savePacket(labeled) {
+  // recentPackets[0] = mais recente; inverte para salvar em ordem cronológica
+  const chosen = recentPackets.filter(p => p.selected && p.messages.length > 0).slice().reverse();
+  if (chosen.length === 0) return;
+  const entry = {
+    id: Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    time: new Date().toISOString(),
+    packetCount: chosen.length,
+    messages: chosen.flatMap(p => p.messages.map(toHex)),
+    label: labeled ? currentLabel() : null,
+  };
+  history.unshift(entry);
+  saveHistory();
+  renderHistory();
+  recentPackets = recentPackets.filter(p => !chosen.includes(p));
+  renderPreview();
+  if (labeled) clearLabelForm();
+}
+
+el('saveBtn').addEventListener('click', () => savePacket(true));
+el('saveUnlabeledBtn').addEventListener('click', () => savePacket(false));
+
+function efeitoParametro(label) {
+  return [label.efeito, label.parametro].filter(Boolean).join('>');
+}
+
+function labelSummary(label) {
+  if (!label) return '<span class="small">sem rótulo</span>';
+  const parts = [];
+  if (label.slot) parts.push(`<span class="tag">${escapeHtml(label.slot)}</span>`);
+  if (label.acao) parts.push(`<span class="tag">${escapeHtml(label.acao)}</span>`);
+  let line = parts.join(' ');
+  const ep = efeitoParametro(label);
+  if (ep) line += `<br>${escapeHtml(ep)}`;
+  if (label.valor) line += ` = <b>${escapeHtml(label.valor)}</b>`;
+  if (label.notas) line += `<br><span class="small">${escapeHtml(label.notas)}</span>`;
+  return line || '<span class="small">sem rótulo</span>';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderHistory() {
+  el('histCount').textContent = history.length;
+  const body = el('histBody');
+  if (history.length === 0) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">Nenhum pacote capturado ainda.</td></tr>';
+    return;
+  }
+  body.innerHTML = history.map((h, i) => {
+    const hexPreview = h.messages.map(m => m.length > 60 ? m.slice(0, 60) + '…' : m).join('<br>');
+    const time = new Date(h.time).toLocaleTimeString();
+    return `<tr>
+      <td>${history.length - i}</td>
+      <td>${time}</td>
+      <td>${h.messages.length}${h.packetCount > 1 ? `<br><span class="small">${h.packetCount} pacotes</span>` : ''}</td>
+      <td>${labelSummary(h.label)}</td>
+      <td><pre class="hex" style="max-height:80px;">${escapeHtml(hexPreview)}</pre></td>
+      <td><button class="rowbtn del" data-id="${h.id}">excluir</button></td>
+    </tr>`;
+  }).join('');
+
+  body.querySelectorAll('.rowbtn.del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      history = history.filter(h => h.id !== btn.dataset.id);
+      saveHistory();
+      renderHistory();
+    });
+  });
+}
+
+function toMarkdown() {
+  const lines = ['# Capturas MIDI SysEx (exportado da ferramenta Web MIDI)', ''];
+  history.slice().reverse().forEach(h => {
+    const l = h.label || {};
+    lines.push(`### ${l.slot || '?'} → ${l.acao || '?'}`);
+    lines.push(`Efeito/Parâmetro: ${efeitoParametro(l) || '(sem rótulo)'}`);
+    lines.push(`Valor: ${l.valor || ''}`);
+    if (l.notas) lines.push(`Notas: ${l.notas}`);
+    h.messages.forEach(m => lines.push(`Hex completo (F0...F7): ${m}`));
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+function download(filename, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+el('exportMdBtn').addEventListener('click', () => {
+  download(`midi_capturas_${Date.now()}.md`, toMarkdown(), 'text/markdown');
+});
+el('exportJsonBtn').addEventListener('click', () => {
+  download(`midi_capturas_${Date.now()}.json`, JSON.stringify(history, null, 2), 'application/json');
+});
+el('clearBtn').addEventListener('click', () => {
+  if (!confirm('Apagar todo o histórico de capturas desta ferramenta? Isso não afeta o documento .md do projeto.')) return;
+  history = [];
+  saveHistory();
+  renderHistory();
+});
+
+renderHistory();
+renderPreview();
+
+if (!navigator.requestMIDIAccess) {
+  el('statusText').textContent = 'Este navegador não suporta Web MIDI API (use Chrome/Edge).';
+  el('connectBtn').disabled = true;
+}
+</script>
+
+</body>
+</html>
